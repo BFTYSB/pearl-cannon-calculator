@@ -115,6 +115,9 @@ Minecraft 26.2 (Chaos Cubed) Fabric 模组 — 游戏内末影珍珠炮弹道求
   pos ←  pos + v
 
 最大飞行 200 tick ｜ 基础阻力 0.9900000095367432 ｜ air_drag_modifier 默认 1.0
+
+> ℹ️ 200 tick 仅为代码内默认参考值，并非 Minecraft 的实际硬限制。
+> 珍珠实际飞行时长取决于距离、速度与落地条件，FTL 远程炮可能远超此值。
 ```
 
 ---
