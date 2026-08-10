@@ -1,0 +1,212 @@
+﻿Minecraft 26.2 珍珠炮计算器模组
+开发技术文档 · 独立 Fabric Mod 方案
+目标版本：Minecraft Java Edition 26.2 (Chaos Cubed)
+文档编写作者：BFTYSB
+文档查询提供者：ofas.ty
+矩阵运算策略：kabity
+开发日期：2026年8月
+文档版本：v1.0
+
+目录
+一、项目概述与核心结论
+二、技术栈与所需 API
+三、版本差异与适配策略
+四、三种模式集成设计
+五、Minecraft 26.2 特定更新
+六、开发检查清单
+七、参考链接
+
+
+一、项目概述与核心结论
+项目目标：开发一个独立的 Minecraft Fabric 模组，在游戏内集成珍珠炮计算器，支持常规炮、弱加载炮、三维矢量炮三种模式通过 UI 切换，并自动适配 Minecraft 26.2 的实体属性变化。
+核心结论：
+• 推荐做成独立 Fabric Mod（而非 Carpet 附属），覆盖更广玩家群体
+• 三种模式（常规/弱加载/三维矢量）通过 GUI Tab 切换，计算层自动适配
+• 26.2 引入了 air_drag_modifier 实体属性，必须动态读取，不能硬编码阻力系数
+• 运动顺序沿用 1.21.2+ 的 &quot;Acceleration → Drag → Position&quot;，无需兼容旧版
+• 开发环境强制要求 JDK 25 + Gradle 9.5.1 + Loom 1.17
+二、技术栈与所需 API
+2.1 开发环境
+组件
+版本要求
+说明
+JDK
+Java 25 (LTS)
+26.1 起强制要求，26.2 延续
+Gradle
+9.5.1
+Fabric 官方推荐
+Loom
+1.17
+Fabric 构建工具
+Fabric Loader
+0.19.3
+最新稳定版
+Fabric API
+0.150.1+
+包含 Enum 扩展、Tag 移除等新 API
+2.2 Minecraft / Fabric API
+API / 接口
+用途
+关键类/方法
+Fabric API
+模组基础框架、事件注册、网络包
+net.fabricmc.fabric.api
+Minecraft Screen API
+游戏内 GUI（自定义界面）
+net.minecraft.client.gui.screens.Screen
+Minecraft Entity NBT
+读取珍珠坐标、动量
+Entity.getX/Y/Z(), Entity.getDeltaMovement()
+ServerExplosion
+Hook 爆炸事件，采集爆炸速度向量
+Level.explode() 或 Mixin 注入
+ServerTickManager
+控制 tick 冻结/步进
+server.tickManager.setFrozen()
+Particle Engine
+轨迹预览（粒子效果）
+Level.addParticle()
+2.3 数学计算库
+库
+用途
+推荐版本
+EJML
+3×3 矩阵求逆、伪逆、SVD
+org.ejml:ejml-all:0.43.1
+ojAlgo
+备选矩阵库，数值稳定性好
+org.ojalgo:ojalgo:53.0.0
+说明：3D 炮用 inv(M)，2D 炮用 pinv(M)（伪逆）。EJML 两者都支持。
+三、版本差异与适配策略
+3.1 致命分水岭：1.21.2
+Java Edition 1.21.2 是一个分水岭，投掷物运算顺序发生根本变化：
+版本区间
+运算顺序
+位移公式
+炮型兼容性
+1.13 ~ 1.21.1
+Position → Drag → Acceleration
+旧闭式解
+360 FTL、836 FTL 等经典炮
+1.21.2+ (含 26.2)
+Acceleration → Drag → Position
+需重新推导
+836 FTL V2 等新型炮
+26.2 确认：Projectile Wiki 仍显示珍珠为 &quot;Acceleration, Drag, Position&quot; 顺序，说明 26.2 未再改动。使用 NewMotionEngine 单引擎即可。
+3.2 各版本支持建议
+目标版本
+支持策略
+原因
+1.20.1 ~ 1.21.1
+可选支持
+生电服主流版本，经典公式成熟
+1.21.2 ~ 1.26.1
+优先支持
+新运动模型，社区正在迁移
+26.2
+必须支持
+最新版，含 air_drag_modifier 新属性
+1.12.2 及以下
+不支持
+珍珠不能被 TNT 推动，珍珠炮不存在
+3.3 跨版本常数（不变）
+阻力系数 d = 0.9900000095367432
+重力加速度 a = &lt;0, -0.03, 0&gt;
+
+注意：常量不变，但差分方程的推导顺序变了，导致闭式解的系数不同。
+四、三种模式集成设计
+玩家在 GUI 顶部选择模式，计算层自动切换：
+模式
+矩阵维度
+求解方法
+特殊参数
+常规炮
+3×2
+伪逆 pinv
+无
+弱加载炮
+3×2
+伪逆 pinv
+加载衰减系数 λ（修正有效 tick）
+三维矢量炮
+3×3
+直接求逆 inv
+三个爆炸位置，8 种取整组合
+4.1 常规炮（2D）
+两个爆炸位置控制 X/Z 平面。使用 3×2 矩阵，通过伪逆求解 TNT 数量。遍历 4 种取整组合找最优解。
+4.2 弱加载炮
+与常规炮计算逻辑相同，但引入加载衰减系数 λ。有效 tick 数 t_eff = λ × t_real。λ 根据区块加载等级经验标定（强加载 λ=1.0，弱加载根据实测调整）。
+4.3 三维矢量炮（3D）
+三个爆炸位置控制 X/Y/Z 空间。使用 3×3 方阵，直接求逆（非伪逆）。遍历 8 种取整组合（2³）找最优解。
+设计要点：
+至少一个爆炸位置在 Y 方向有显著分量，确保矩阵条件数良好
+三个爆炸速度向量必须不共面（det(M) ≠ 0）
+Y 轴控制敏感，需要非常精确的速度微调
+五、Minecraft 26.2 特定更新
+5.1 致命变化：air_drag_modifier 实体属性
+26.2 新增了实体属性 minecraft:air_drag_modifier，直接控制珍珠的空气阻力系数。
+属性说明：
+• 默认值：1.0（使用现有阻力）
+• 范围：0.0 ~ 2048.0
+• 作用：effective_drag = base_drag × air_drag_modifier
+• 影响：如果服务器/数据包修改了该属性，硬编码 0.99 会导致系统性偏差
+代码适配：
+double dragModifier = pearl.getAttributeValue(EntityAttributes.AIR_DRAG_MODIFIER);
+double effectiveDrag = 0.9900000095367432 * dragModifier;
+5.2 运动模型确认
+26.2 沿用 1.21.2+ 的 &quot;Acceleration → Drag → Position&quot; 运算顺序，未再改动。NewMotionEngine 可直接用于 26.2。
+5.3 bounciness 实体属性
+新增 minecraft:bounciness 属性，控制碰撞后速度恢复比例。默认值 0.0。对长距离 FTL 炮影响极小，短距离炮可能需要考虑。
+5.4 其他 API 变化
+变化
+影响
+适配
+图形后端 Vulkan（实验性）
+不要直接调用 OpenGL
+使用 Blaze3D API 或 Fabric 渲染 API
+NBT HurtByTimestamp 移除
+LivingEntity 不再有此标签
+改用 ticks_since_last_hurt_by_mob
+Data Pack 版本 107.1
+数据包格式更新
+pack_format = 107.1
+Enum 扩展 API
+可安全扩展原版 Enum
+Fabric Loader 0.19.0 新特性
+六、开发检查清单
+□ 安装 JDK 25（不是 21！）
+□ Gradle 9.5.1 + Loom 1.17
+□ 运动引擎使用 NewMotionEngine（Acceleration→Drag→Position）
+□ 读取珍珠的 air_drag_modifier 属性参与计算
+□ 确认 bounciness 属性是否需要纳入落点预测
+□ 爆炸数据采集通过 Mixin 注入 ServerExplosion（不依赖 Carpet）
+□ GUI 使用 Minecraft Screen API（不直接调用 OpenGL）
+□ 数据包格式版本设为 107.1
+□ 测试时确认服务器未修改珍珠的 air_drag_modifier（默认值 1.0）
+□ 2D 炮使用伪逆 pinv，3D 炮使用直接求逆 inv
+□ 弱加载模式引入加载衰减系数 λ
+□ 支持中文和英文 i18n
+□ 配置文件保存炮的参数，支持导出/导入
+七、参考链接
+Minecraft 26.2 官方发布说明
+https://www.minecraft.net/en-us/article/minecraft-java-edition-26-2
+Minecraft Wiki 26.2 完整更新日志
+https://minecraft.wiki/w/Java_Edition_26.2
+Fabric 26.2 开发指南
+https://fabricmc.net/2026/06/15/262.html
+Fabric 开发环境搭建（含 JDK 25）
+https://docs.fabricmc.net/develop/getting-started/setting-up
+Projectile Wiki（含运动顺序）
+https://minecraft.wiki/w/Projectile
+珍珠炮 Wiki 教程
+https://minecraft.wiki/w/Tutorials/Pearl_cannon
+PearlCalculatorRS（Rust 版计算器）
+https://github.com/MliroLirrorsIngenuity/PearlCalculatorRS
+Pearl-Calculator-rs（另一实现）
+https://github.com/jasonxue1/Pearl-Calculator-rs
+carpet-ftlconfig（Carpet 采集模组）
+https://github.com/MliroLirrorsIngenuity
+Carpet TIS Addition（已支持 26.2）
+https://github.com/TISUnion/Carpet-TIS-Addition
+

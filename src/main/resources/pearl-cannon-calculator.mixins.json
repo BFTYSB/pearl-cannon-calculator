@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.pearlcannon.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "PearlEntityTickMixin",
+    "ServerExplosionMixin"
+  ],
+  "client": [],
+  "server": [
+    "PearlEntityTickMixin",
+    "ServerExplosionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
